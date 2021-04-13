@@ -67,7 +67,7 @@ mysql_info = {
     "host" : "localhost",  # mysql服务端ip
     "port" : 3306,  # mysql端口
     "user" : "root",  # mysql 账号
-    "password" : "rootroot",
+    "password" : "root",
     "db" : "djjk",
     "charset" : "utf8",
     "cursorclass" : pymysql.cursors.DictCursor
