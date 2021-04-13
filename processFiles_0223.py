@@ -52,9 +52,8 @@ class ProcessData(threading.Thread):
     def now(self):
         return datetime.datetime.now()
 
-    @property
-    def now_str(self):
-        return self.now.strftime(settings.DATETIME_PATTERN)
+    def now_str(self,formats=settings.DATETIME_PATTERN):
+        return self.now.strftime(formats)
 
     def clothes(blanking_time, flag=False):
         """
@@ -64,10 +63,11 @@ class ProcessData(threading.Thread):
         """
 
         def decorate(func):
+
             @wraps(func)
             def ware(self, *args, **kwargs):
+                # print(id(self))
                 last_time = self.dic.get(func)
-
                 if not last_time:
                     ret = None
                     if not flag:
@@ -85,7 +85,7 @@ class ProcessData(threading.Thread):
     def setup(self):
         print("正在准备中。。。")
         try:
-
+            self.get_mysql_connect()
             self.get_mangodb_connect()
             self.set_machineinfo_from_file()
             self.set_logger()
@@ -124,7 +124,7 @@ class ProcessData(threading.Thread):
         """
         获取上传刀具健康度的mysql连接
         """
-        self.mysql_connect = pymysql.connect(**settings.hp_mysql_info)
+        self.mysql_connect = pymysql.connect(**settings.mysql_info)
         self.cursor = self.mysql_connect.cursor()
 
     def get_signalr_hub(self):
@@ -191,7 +191,10 @@ class ProcessData(threading.Thread):
     @clothes(settings.LOADDATA_UPLOAD_BLANKING_TIME, flag=True)
     def 发送负载数据到云端(self):
         print("发送负载到云端%s" % self.load_cache)
-        self.put_loaddata_to_cloud(self.load_cache)
+        #self.put_loaddata_to_cloud(self.load_cache)
+        import random
+        data = [random.randint(1,5) for _ in range(5)]
+        self.更新数据(1, data, tb_name="load_data")
         self.load_cache = []
 
     def put_loaddata_to_cloud(self, data):
@@ -204,7 +207,7 @@ class ProcessData(threading.Thread):
         data = ",".join([str(i) for i in data])
 
         try:
-            self.hub.server.invoke(settings.FZ_HUB_NAME, self.companyNo, self.deviceNo, self.now_str, data)
+            self.hub.server.invoke(settings.FZ_HUB_NAME, self.companyNo, self.deviceNo, self.now_str(), data)
         except Exception as e:
             print(e)
             self.ready = False
@@ -317,8 +320,32 @@ class ProcessData(threading.Thread):
         :return:
         """
         self.处理振动数据()
-        self.put_vibdata_to_cloud(self.processed_raw_vibData)
+        #self.put_vibdata_to_cloud(self.processed_raw_vibData)
+        import random
+        data = [random.randint(-600, 601) for i in range(60)]
+        val = 600
+        max_abs_val = max(abs(min(data)), abs(max(data)))
+        if 600 < max_abs_val < 1000:
+            val = 1000
+        elif 1000 < max_abs_val < 1500:
+            val = 1500
+        elif max_abs_val >= 1500:
+            val = 2000
+        print(data)
+        data.insert(0, val)
+        data = ",".join([str(i) for i in data])
+        len(data)
+        self.更新数据(1, data, tb_name="vib_data")
         self.raw_vibData_cache = []
+
+    def 更新数据(self, machine_num, data, tb_name):
+        data = str(data)
+        now_time = self.now_str(formats="%Y-%m-%d %H:%M:%S")
+        with self.mysql_connect.cursor() as cursor:
+            cursor.execute(
+                '''UPDATE %s SET data="%s",time="%s" WHERE machine_num=%s;''' % (tb_name, data, now_time, machine_num))
+            self.mysql_connect.commit()
+            return True
 
     def put_vibdata_to_cloud(self, data):
         """
@@ -334,10 +361,12 @@ class ProcessData(threading.Thread):
             val = 1500
         elif max_abs_val >= 1500:
             val = 2000
+        print(data)
         data.insert(0, val)
         data = ",".join([str(i) for i in data])
+
         try:
-            self.hub.server.invoke(settings.WORKING_HUB_NAME, self.companyNo, self.deviceNo, self.now_str, data)
+            self.hub.server.invoke(settings.WORKING_HUB_NAME, self.companyNo, self.deviceNo, self.now_str(), data)
         except Exception as e:
             print(e)
             self.ready = False
@@ -404,11 +433,11 @@ class ProcessData(threading.Thread):
     def 发送健康度到API(self):
         data = settings.TOOL_HP_CACHE_POST_PARRM
         data["collect_data"] = self.tool_hp
-        data["collect_date"] = self.now_str
+        data["collect_date"] = self.now_str()
         data["tool_position"] = self.tool_num
         
-        resp = self.s.post(settings.TOOL_HP_CACHE_POST_URL, data=data)
-        print(resp.text)
+        #resp = self.s.post(settings.TOOL_HP_CACHE_POST_URL, data=data)
+        #print(resp.text)
 
     def 进行UI报警(self, type):
         print("ui报警")
@@ -466,14 +495,25 @@ class ProcessData(threading.Thread):
         return H, flag_wear
 
     def 发送健康度到云端(self):
-        self.put_hpdata_to_cloud(self.tool_hp)
+        #self.put_hpdata_to_cloud(self.tool_hp)
+        import random
+        hp_data = random.random()
+        self.更新健康度(1,2,self.tool_hp)
         print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num))
+
+    def 更新健康度(self, machine_num, tool_num, tool_hp):
+        now_time = self.now_str(formats="%Y-%m-%d %H:%M:%S")
+
+        with self.mysql_connect.cursor() as cursor:
+            cursor.execute('''INSERT INTO tool_hp(hp, machine_num, tool_num,time) VALUES(%s,%s,%s,"%s");;'''%(tool_hp, machine_num, tool_num, now_time))
+            self.mysql_connect.commit()
+            return True
 
     def put_hpdata_to_cloud(self, data):
         companyNo = self.companyNo
         deviceNo = self.deviceNo
         try:
-            self.hub.server.invoke(settings.HEALTH_HUB_NAME, companyNo, deviceNo, self.tool_num, self.now_str, data * 100)
+            self.hub.server.invoke(settings.HEALTH_HUB_NAME, companyNo, deviceNo, self.tool_num, self.now_str(), data * 100)
         except Exception as e:
             print(e)
             self.ready = False
@@ -532,6 +572,7 @@ class ProcessData(threading.Thread):
         while 1:
             self.setup()
             while self.ready:
+
                 if settings.LEARNNING_MODEL:
                     self.prepare_machineInfo()
                     self.prepare_vibrationData()
@@ -544,7 +585,14 @@ class ProcessData(threading.Thread):
 
                 else:
                     try:
-
+                        # for k in self.dic.keys():
+                        #     #print(self.now)
+                        #     if "发送振动数据到云端" == k.__name__:
+                        #         # print("====")
+                        #         # print(self,self.dic[k],self.发送振动数据到云端, self.__class__.发送振动数据到云端, k)
+                        #         print(dir(k))
+                        #         print(self, id(self), id(self.发送振动数据到云端), id(self.__class__.发送振动数据到云端), id(k), )
+                        #         print("----")
                         self.prepare_machineInfo()
                         self.prepare_vibrationData()
                         if self.机台正在加工():
@@ -570,6 +618,7 @@ if __name__ == '__main__':
     t = []
 
     t.append(ProcessData())
+    # t.append(ProcessData())
 
 
     for t1 in t:

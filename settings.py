@@ -1,5 +1,8 @@
 ﻿import os
 import json
+
+import pymysql
+
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_PATH = os.path.join(BASE_PATH, "config.json")
 with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
@@ -34,7 +37,7 @@ RAWVIBDATA_UPLOAD_BLANKING_TIME = 1*1000
 VIBDATA_DB_TIME = 100
 
 # 每隔多少时间间隔获取一次机台信息 毫秒
-LOADDATA_DB_GET_BLANKING_TIME = 100
+LOADDATA_DB_GET_BLANKING_TIME = 200
 
 # 从数据库获取振动数据间隔 毫秒
 VIBDATA_DB_GET_BLANKING_TIME = 100
@@ -58,6 +61,16 @@ machineInfo_mangodb_info = {
     "db_name" : "FanucData",
     "tb_name" : "Machine01",
     "connect_timeoutMS" : "10000",
+}
+
+mysql_info = {
+    "host" : "localhost",  # mysql服务端ip
+    "port" : 3306,  # mysql端口
+    "user" : "root",  # mysql 账号
+    "password" : "rootroot",
+    "db" : "djjk",
+    "charset" : "utf8",
+    "cursorclass" : pymysql.cursors.DictCursor
 }
 
 #websocket 发送配置
