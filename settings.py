@@ -59,7 +59,7 @@ vibdata_mangodb_info = {
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "FanucData",
-    "tb_name" : "Machine01",
+    "tb_name" : "Machine0414",
     "connect_timeoutMS" : "10000",
 }
 

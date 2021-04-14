@@ -61,8 +61,8 @@ def 更新健康度(machine_num, tool_num, tool_hp):
 def 执行系列sql语句():
     cursor, conn = get_mysql_connect()
     execute_sql_list = []
-    file_lists = ["machine_info.sql", "tool_info.sql", "load_data.sql", "tool_hp.sql", "vib_data.sql", "warming.sql", ]
-
+    #file_lists = ["machine_info.sql", "tool_info.sql", "load_data.sql", "tool_hp.sql", "vib_data.sql", "warming.sql", ]
+    file_lists = ["djjk.sql"]
     for file in file_lists:
         file_path = os.path.join(settings.BASE_PATH, "mysql_struct", file)
         with open(file_path, 'r+', encoding="utf-8") as f:

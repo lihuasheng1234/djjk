@@ -89,9 +89,9 @@ class ProcessData(threading.Thread):
             self.get_mangodb_connect()
             self.set_machineinfo_from_file()
             self.set_logger()
-            if not settings.LEARNNING_MODEL:
+          #  if not settings.LEARNNING_MODEL:
                 # self.get_mysql_connect()
-                self.get_signalr_hub()
+           #     self.get_signalr_hub()
             self.ready = True
         except Exception as e:
             print(e)
@@ -192,9 +192,10 @@ class ProcessData(threading.Thread):
     def 发送负载数据到云端(self):
         print("发送负载到云端%s" % self.load_cache)
         #self.put_loaddata_to_cloud(self.load_cache)
-        import random
-        data = [random.randint(1,5) for _ in range(5)]
-        self.更新数据(1, data, tb_name="load_data")
+        #import random
+        #data = [random.randint(1,5) for _ in range(5)]
+        #print(len(str(self.load_cache)))
+        self.更新数据(1, self.load_cache, tb_name="load_data")
         self.load_cache = []
 
     def put_loaddata_to_cloud(self, data):
@@ -322,7 +323,7 @@ class ProcessData(threading.Thread):
         self.处理振动数据()
         #self.put_vibdata_to_cloud(self.processed_raw_vibData)
         import random
-        data = [random.randint(-600, 601) for i in range(60)]
+        data = self.processed_raw_vibData
         val = 600
         max_abs_val = max(abs(min(data)), abs(max(data)))
         if 600 < max_abs_val < 1000:
@@ -331,11 +332,12 @@ class ProcessData(threading.Thread):
             val = 1500
         elif max_abs_val >= 1500:
             val = 2000
-        print(data)
+        #print(data)
         data.insert(0, val)
         data = ",".join([str(i) for i in data])
-        len(data)
+        #print(len(str(self.processed_raw_vibData)))
         self.更新数据(1, data, tb_name="vib_data")
+        
         self.raw_vibData_cache = []
 
     def 更新数据(self, machine_num, data, tb_name):
@@ -496,8 +498,6 @@ class ProcessData(threading.Thread):
 
     def 发送健康度到云端(self):
         #self.put_hpdata_to_cloud(self.tool_hp)
-        import random
-        hp_data = random.random()
         self.更新健康度(1,2,self.tool_hp)
         print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num))
 
@@ -506,6 +506,7 @@ class ProcessData(threading.Thread):
 
         with self.mysql_connect.cursor() as cursor:
             cursor.execute('''INSERT INTO tool_hp(hp, machine_num, tool_num,time) VALUES(%s,%s,%s,"%s");;'''%(tool_hp, machine_num, tool_num, now_time))
+            #print(cursor.fetchall())
             self.mysql_connect.commit()
             return True
 
