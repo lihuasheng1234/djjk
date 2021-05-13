@@ -4,7 +4,46 @@ import json
 import pymysql
 
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
+
+if not os.path.exists(os.path.join(BASE_PATH, "config.json")):
+    with open(os.path.join(BASE_PATH, "config.json"), 'w') as f:
+        data = '''{
+    "company_no": "CMP20210119001",
+    "device_no": "0001",
+    "damage":{
+    "signalr_url": "http://202.104.118.59:8070/signalr/",
+    "signalr_hubname": "dashBoardHub",
+    "load_send_funcname": "broadcastDJJK_FZ",
+    "raw_send_funcname": "broadcastDJJK_Working",
+    "rws_send_funcname": "broadcastDJJK_Health",
+    "alarm_send_funcname": "BroadcastDJJK_Alarm",
+    "data_post_params": "http://202.104.118.59:8054/api/TblDeviceFanuc/InsertToolDetect",
+    "T00":"AAAA,0.2,0.6",
+    "T01":"AAAA,0.2,0.6",
+    "T02":"AAAA,0.2,0.6",
+    "T03":"AAAA,0.2,0.6",
+    "T04":"AAAA,0.2,0.6",
+    "T05":"AAAA,0.2,0.6",
+    "T06":"AAAA,0.2,0.6",
+    "T07":"AAAA,0.2,0.6",
+    "T08":"AAAA,0.2,0.6",
+    "T10":"AAAA,0.2,0.6",
+    "T11":"AAAA,0.2,0.6",
+    "T12":"AAAA,0.2,0.6",
+    "T13":"AAAA,0.2,0.6",
+    "T14":"AAAA,0.2,0.6",
+    "T15":"AAAA,0.2,0.6",
+    "T16":"AAAA,0.2,0.6",
+    "T17":"AAAA,0.2,0.6",
+    "T18":"AAAA,0.2,0.6",   
+    "T19":"AAAA,0.2,0.6",
+    "T20":"AAAA,0.2,0.6"
+    }
+    }'''
+        json.dump(json.loads(data), f)
 SETTINGS_PATH = os.path.join(BASE_PATH, "config.json")
+
+
 with open(SETTINGS_PATH, 'r', encoding='utf-8') as f:
     #print(list(f.readlines()))
     json_data = json.load(f)
@@ -25,7 +64,7 @@ IS_LOCAL = False
 LEARNNING_MODEL = False
 
 # 计算健康度时间间隔 毫秒
-TOOLHEALTH_COMPUTE_BLANKING_TIME = 3*1000
+TOOLHEALTH_COMPUTE_BLANKING_TIME = 5*1000
 
 # 负载上传时间 毫秒
 LOADDATA_UPLOAD_BLANKING_TIME = 1*1000
@@ -95,9 +134,6 @@ TOOL_HP_CACHE_POST_PARRM = {
     }
 
 MACHINE1_IP = "192.168.1.1"
-
-MACHINEINFO_DB_PATH = r'C:\Users\57852\Desktop\fanuc_iot.db'
-SQLITE_SQL = "select SPINDLE_LOAD, SET_FEED, SET_SPEED, TOOL_NUM, ACT_FEED, ACT_SPEED from FANUC_IOT order by ID desc limit 1;"
 
 # 报警接口dll文件路径
 DLL_PATH = BASE_PATH

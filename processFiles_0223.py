@@ -1,8 +1,12 @@
 import json
 import os
 import ctypes
+import subprocess
+
+import joblib
 import requests
 from gevent import monkey
+import pandas as pd
 
 monkey.patch_all()
 
@@ -18,7 +22,6 @@ import pymysql
 from signalr import Connection
 from requests import Session
 from datetime import timedelta
-
 import settings
 
 """
@@ -48,6 +51,8 @@ class ProcessData(threading.Thread):
         self.deviceNo = settings.device_no
         self.logger = logging.getLogger()
         self.val = 30
+
+
     @property
     def now(self):
         return datetime.datetime.now()
@@ -84,14 +89,16 @@ class ProcessData(threading.Thread):
 
     def setup(self):
         print("正在准备中。。。")
+        self.check_or_create_necessary_file()
         try:
+            self.rf = joblib.load('rfr.pkl')
             self.get_mysql_connect()
             self.get_mangodb_connect()
             self.set_machineinfo_from_file()
             self.set_logger()
-            if not settings.LEARNNING_MODEL:
+            #if not settings.LEARNNING_MODEL:
                 # self.get_mysql_connect()
-                self.get_signalr_hub()
+            #    self.get_signalr_hub()
             self.ready = True
         except Exception as e:
             print(e)
@@ -331,10 +338,10 @@ class ProcessData(threading.Thread):
             val = 1500
         elif max_abs_val >= 1500:
             val = 2000
-        print(data)
+
         data.insert(0, val)
         data = ",".join([str(i) for i in data])
-        len(data)
+        print(data)
         self.更新数据(1, data, tb_name="vib_data")
         self.raw_vibData_cache = []
 
@@ -478,20 +485,31 @@ class ProcessData(threading.Thread):
     输出：健康度H、崩缺报警标志flag_notch、磨损报警标志flag_wear
     '''
 
-    def alarm(self, raw_data, beta=0.75):
+    def alarm(self, raw_data, beta=0.60):
+
         flag_wear = 0
+        feature = []
+        feature_all = []
         data = []
         for i in range(len(raw_data)):
             data += raw_data[i]
+        # 计算rms
+        tem = np.array(data)
+        rms = sqrt(np.sum(np.int64(tem ** 2)) / len(data))
+        feature.append(rms)
+        data = pd.Series(data)
+        # 计算std、kurt
+        std = data.rolling(5000).std()
+        feature.append(std[6000])
+        kurt = data.rolling(5000).kurt()
+        feature.append(kurt[6000])
+        feature_all.append(feature)
 
-        data = np.array(data)
-        rms = sqrt(np.sum(np.int64((data) ** 2)) / len(data))
-
+        # 预测健康度
+        H = self.rf.predict(feature_all)
         # 磨损报警
-        H = 1 / (1 + log(rms, 10 ** 4)) + 0.2
         if H < beta:
             flag_wear = 1
-
         return H, flag_wear
 
     def 发送健康度到云端(self):
@@ -540,82 +558,48 @@ class ProcessData(threading.Thread):
                 .format(self.act_speed, self.act_feed, self.tool_num, self.set_speed, self.set_feed, self.load,
                         self.tool_hp, len(self.pre_data), len(self.raw_vibData_cache), len(self.vibData_cache)), self.机台正在加工())
 
-    @clothes(settings.LEARNNING_MODEL_BLANKING_TIME, flag=True)
-    def 学习模式(self):
-        """
-        把震动数据存储下来
-        :return:
-        """
-        self.保存振动数据到本地()
-        self.clean_vibdata_cache()
-        self.raw_vibData_cache = []
-        self.load_cache = []
-
-    def 保存振动数据到本地(self):
-        
-        file_name = self.now.strftime(settings.SAVEDDATA_FILENAME_FORMAT) + ".txt"
-        data_dir_name = 'data'
-        data_dir_path = os.path.join(settings.BASE_PATH, data_dir_name, self.tool_num)
-        os.makedirs(data_dir_path, exist_ok=True)
-        file_path = os.path.join(data_dir_path, file_name)
-        data = []
-        for i in self.vibData_cache:
-            data.extend(i)
-        with open(file_path, "w") as f:
-            f.write(json.dumps(data))
-
     def run(self) -> None:
         """
         每1秒获取一次数据 每次10条 间隔100毫秒
         """
-
         while 1:
             self.setup()
             while self.ready:
-
-                if settings.LEARNNING_MODEL:
+                try:
                     self.prepare_machineInfo()
                     self.prepare_vibrationData()
+                    if self.机台正在加工():
+                        self.换刀判断()
+                        self.处理健康度()
+                    self.发送振动数据到云端()
+                    self.发送负载数据到云端()
                     self.show_info()
-                    if True:
-                        if self.机台换刀:
-                            self.dic[self.学习模式] -= datetime.timedelta(
-                                milliseconds=settings.LEARNNING_MODEL_BLANKING_TIME)
-                        self.学习模式()
-
-                else:
-                    try:
-                        # for k in self.dic.keys():
-                        #     #print(self.now)
-                        #     if "发送振动数据到云端" == k.__name__:
-                        #         # print("====")
-                        #         # print(self,self.dic[k],self.发送振动数据到云端, self.__class__.发送振动数据到云端, k)
-                        #         print(dir(k))
-                        #         print(self, id(self), id(self.发送振动数据到云端), id(self.__class__.发送振动数据到云端), id(k), )
-                        #         print("----")
-                        self.prepare_machineInfo()
-                        self.prepare_vibrationData()
-                        if self.机台正在加工():
-                            self.换刀判断()
-                            self.处理健康度()
-                        self.发送振动数据到云端()
-                        self.发送负载数据到云端()
-                        self.show_info()
-
-                    except Exception as e:
-                        print(e)
-                        self.ready = False
+                except Exception as e:
+                    print("错误信息：%s"%e)
+                    self.ready = False
                 time.sleep(0.001)
             if not self.ready:
                 print("五秒后重试")
                 time.sleep(5)
 
+    def check_or_create_necessary_file(self):
+        """
+        检查项目运行所需文件完整性
+        :return:
+        """
+        # 检查用户设定文件
+        pass
+
+
+
 
 if __name__ == '__main__':
 
-    print("hello world")
-
+    print("检查更新中。。。")
+    p = subprocess.Popen(os.path.join(settings.BASE_PATH, "update.exe"))
     t = []
+
+
 
     t.append(ProcessData())
     # t.append(ProcessData())
