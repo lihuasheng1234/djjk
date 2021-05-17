@@ -98,7 +98,7 @@ vibdata_mangodb_info = {
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "FanucData",
-    "tb_name" : "Machine01",
+    "tb_name" : "Machine0414",
     "connect_timeoutMS" : "10000",
 }
 
@@ -106,7 +106,7 @@ mysql_info = {
     "host" : "localhost",  # mysql服务端ip
     "port" : 3306,  # mysql端口
     "user" : "root",  # mysql 账号
-    "password" : "rootroot",
+    "password" : "root",
     "db" : "djjk",
     "charset" : "utf8",
     "cursorclass" : pymysql.cursors.DictCursor
