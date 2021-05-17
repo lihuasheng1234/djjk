@@ -197,11 +197,10 @@ class ProcessData(threading.Thread):
 
     @clothes(settings.LOADDATA_UPLOAD_BLANKING_TIME, flag=True)
     def 发送负载数据到云端(self):
-        print("发送负载到云端%s" % self.load_cache)
+        #print("发送负载到云端%s" % self.load_cache)
         #self.put_loaddata_to_cloud(self.load_cache)
-        import random
-        data = [random.randint(1,5) for _ in range(5)]
-        self.更新数据(1, data, tb_name="load_data")
+        print("当前负载数据：%s"%self.load_cache)
+        self.更新数据(1, self.load_cache, tb_name="load_data")
         self.load_cache = []
 
     def put_loaddata_to_cloud(self, data):
@@ -326,23 +325,9 @@ class ProcessData(threading.Thread):
         清空本地缓存
         :return:
         """
-        self.处理振动数据()
-        #self.put_vibdata_to_cloud(self.processed_raw_vibData)
-        import random
-        data = [random.randint(-600, 601) for i in range(60)]
-        val = 600
-        max_abs_val = max(abs(min(data)), abs(max(data)))
-        if 600 < max_abs_val < 1000:
-            val = 1000
-        elif 1000 < max_abs_val < 1500:
-            val = 1500
-        elif max_abs_val >= 1500:
-            val = 2000
+        data = self.处理振动数据()
 
-        data.insert(0, val)
-        data = ",".join([str(i) for i in data])
-        print(data)
-        self.更新数据(1, data, tb_name="vib_data")
+        self.更新数据(self.deviceNo, data, tb_name="vib_data")
         self.raw_vibData_cache = []
 
     def 更新数据(self, machine_num, data, tb_name):
@@ -354,12 +339,15 @@ class ProcessData(threading.Thread):
             self.mysql_connect.commit()
             return True
 
-    def put_vibdata_to_cloud(self, data):
+
+
+    def 处理振动数据(self):
         """
-        把处理过的振动数据 通过websocket发送到指定地址
-        :param data:
+        把振动数据降频处理
         :return:
         """
+        self.processed_raw_vibData = self.raw_vibData_cache[:60]
+        data = self.processed_raw_vibData
         val = 600
         max_abs_val = max(abs(min(data)), abs(max(data)))
         if 600 < max_abs_val < 1000:
@@ -368,22 +356,11 @@ class ProcessData(threading.Thread):
             val = 1500
         elif max_abs_val >= 1500:
             val = 2000
-        print(data)
+
         data.insert(0, val)
         data = ",".join([str(i) for i in data])
-
-        try:
-            self.hub.server.invoke(settings.WORKING_HUB_NAME, self.companyNo, self.deviceNo, self.now_str(), data)
-        except Exception as e:
-            print(e)
-            self.ready = False
-
-    def 处理振动数据(self):
-        """
-        把振动数据降频处理
-        :return:
-        """
-        self.processed_raw_vibData = self.raw_vibData_cache[:60]
+        print("当前振动数据:%s"%data[:10])
+        return data
 
     @clothes(settings.TOOLHEALTH_COMPUTE_BLANKING_TIME, True)
     def 处理健康度(self):
@@ -393,7 +370,9 @@ class ProcessData(threading.Thread):
         """
 
         H, flag_wear = self.运行对应算法计算健康度()
-        print(H, flag_wear)
+        if H:
+            H = H[0]
+            print(H, flag_wear)
         self.tool_hp_pre = self.tool_hp
         self.tool_hp = H
 
@@ -428,7 +407,7 @@ class ProcessData(threading.Thread):
             print("断刀报警")
             flag = 3
         if self.load > settings.MAX_LOAD_WARMING:
-            self.进行机台报警()
+            #self.进行机台报警()
             self.写入日志("机台%s-->负载过高报警" % self.deviceNo)
         if flag:
             self.进行机台报警()
@@ -448,18 +427,14 @@ class ProcessData(threading.Thread):
 
     def 进行UI报警(self, type):
         print("ui报警")
-        json_data = [
-            {
-                "machine_num": self.deviceNo,
-                "data": [
-                    self.tool_num,
-                ]
-
-            },
-        ]
-        self.hub.server.invoke(settings.ALARM_HUB_NAME, self.companyNo, json.dumps(json_data))
+        sql = "insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),1,7,'MX8-08');"
+        with self.mysql_connect.cursor() as cursor:
+            cursor.execute('''insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),%s,%s,'MX8-08');'''%(self.deviceNo, self.tool_num))
+            self.mysql_connect.commit()
+            return True
 
     def 进行机台报警(self):
+        return
         machine_ip = settings.MACHINE1_IP
         alarm_flag = 511
         alarm_No = 3
@@ -493,6 +468,7 @@ class ProcessData(threading.Thread):
         data = []
         for i in range(len(raw_data)):
             data += raw_data[i]
+        print(len(data))
         # 计算rms
         tem = np.array(data)
         rms = sqrt(np.sum(np.int64(tem ** 2)) / len(data))
@@ -514,8 +490,6 @@ class ProcessData(threading.Thread):
 
     def 发送健康度到云端(self):
         #self.put_hpdata_to_cloud(self.tool_hp)
-        import random
-        hp_data = random.random()
         self.更新健康度(1,2,self.tool_hp)
         print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num))
 
@@ -548,7 +522,7 @@ class ProcessData(threading.Thread):
             self.dic[self.处理健康度] -= datetime.timedelta(milliseconds=settings.TOOLHEALTH_COMPUTE_BLANKING_TIME)
 
 
-    @clothes(5000)
+    @clothes(1000)
     def show_info(self):
         """
         显示当前算法运行状况
@@ -596,7 +570,7 @@ class ProcessData(threading.Thread):
 if __name__ == '__main__':
 
     print("检查更新中。。。")
-    p = subprocess.Popen(os.path.join(settings.BASE_PATH, "update.exe"))
+    #p = subprocess.Popen(os.path.join(settings.BASE_PATH, "update.exe"))
     t = []
 
 

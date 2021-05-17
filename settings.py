@@ -64,7 +64,7 @@ IS_LOCAL = False
 LEARNNING_MODEL = False
 
 # 计算健康度时间间隔 毫秒
-TOOLHEALTH_COMPUTE_BLANKING_TIME = 5*1000
+TOOLHEALTH_COMPUTE_BLANKING_TIME = 60*1000
 
 # 负载上传时间 毫秒
 LOADDATA_UPLOAD_BLANKING_TIME = 1*1000
@@ -91,14 +91,14 @@ LEARNNING_MODEL_BLANKING_TIME = 2*1000
 vibdata_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "VibrationData",
-    "tb_name" : "Sensor03",
+    "tb_name" : "Sensor0517",
     "connect_timeoutMS" : "10000",
 }
 
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "FanucData",
-    "tb_name" : "Machine0414",
+    "tb_name" : "Machine0517",
     "connect_timeoutMS" : "10000",
 }
 
