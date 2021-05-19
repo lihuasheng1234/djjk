@@ -86,19 +86,21 @@ VIBDATA_COUNT = VIBDATA_DB_GET_BLANKING_TIME//VIBDATA_DB_TIME
 
 # 从数据库获取振动数据间隔 毫秒
 LEARNNING_MODEL_BLANKING_TIME = 2*1000
+# 分析参数：1为周期性分析 2为持续性分析
+ANALYSIS_MODEL =1
 
 #mangodb settings
 vibdata_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "VibrationData",
-    "tb_name" : "Sensor",
+    "tb_name" : "Sensor0519",
     "connect_timeoutMS" : "10000",
 }
 
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
-    "db_name" : "MachineData",
-    "tb_name" : "machineData",
+    "db_name" : "FanucData",
+    "tb_name" : "Machine0519",
     "connect_timeoutMS" : "10000",
 }
 
@@ -106,7 +108,7 @@ mysql_info = {
     "host" : "localhost",  # mysql服务端ip
     "port" : 3306,  # mysql端口
     "user" : "root",  # mysql 账号
-    "password" : "rootroot",
+    "password" : "root",
     "db" : "djjk",
     "charset" : "utf8",
     "cursorclass" : pymysql.cursors.DictCursor
@@ -154,4 +156,3 @@ FZ_HUB_NAME = TOTAL_SETTINGS["damage"]["load_send_funcname"]
 HEALTH_HUB_NAME = TOTAL_SETTINGS["damage"]["rws_send_funcname"]
 ALARM_HUB_NAME = TOTAL_SETTINGS["damage"]["alarm_send_funcname"]
 
-ANALYSIS_MODEL =1

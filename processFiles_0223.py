@@ -117,10 +117,11 @@ class ProcessData(threading.Thread):
             self.last_transform_time =datetime.datetime.strptime(self.last_machineData["time"], "%Y-%m-%d-%H-%M-%S-%f")
         except Exception as e:
             print(e)
+            print("错误行号：%s"% e.__traceback__.tb_lineno)
             self.ready = False
 
     def set_logger(self):
-        print(self.logger.handlers)
+        #print(self.logger.handlers)
         if not self.logger.handlers:
             fh = logging.FileHandler(filename=settings.kwargs['filename'], mode=settings.kwargs['mode'],
                                      encoding="utf-8")
@@ -398,6 +399,7 @@ class ProcessData(threading.Thread):
             cursor.execute('''SELECT * from {0} WHERE machine_num={1};'''.format("load_data", machine_num))
             self.mysql_connect.commit()
             ret2 = cursor.fetchone()
+            #print(ret1, ret2)
             if not ret1:
                 cursor.execute('''INSERT INTO vib_data(data, time, machine_num) VALUES("{0}",NOW(),{1});'''.format("[0]", machine_num))
                 self.mysql_connect.commit()
@@ -628,10 +630,12 @@ class ProcessData(threading.Thread):
         """
         while 1:
             self.setup()
+            print("准备完成")
             while self.ready:
                 try:
                     self.判断数据存在(int(self.deviceNo))
                     self.prepare_machineInfo()
+                    
                     #self.prepare_vibrationData()
                     self.处理健康度()
                     self.发送振动数据到云端()
