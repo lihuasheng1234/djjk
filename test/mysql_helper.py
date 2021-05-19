@@ -30,6 +30,13 @@ def 更新负载(machine_num, data):
     ret = cursor.fetchone()
     print(ret)
 
+def 查询数据(tb_name, machine_num):
+    cursor, conn = get_mysql_connect()
+    cursor.execute("SELECT * from {0} WHERE machine_num={1};".format(tb_name, machine_num))
+    conn.commit()
+    ret = cursor.fetchone()
+    print(ret)
+
 def 更新加工状态(machine_num, data, type):
     data = str(data)
 
@@ -90,4 +97,4 @@ def test():
         print(sql_list)
 import time
 if __name__ == '__main__':
-    执行系列sql语句()
+    查询数据("vib_data", 2)

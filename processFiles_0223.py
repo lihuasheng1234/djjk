@@ -5,6 +5,7 @@ import subprocess
 
 import joblib
 import requests
+from bson import ObjectId
 from gevent import monkey
 import pandas as pd
 
@@ -19,8 +20,6 @@ import numpy as np
 from math import *
 import pymongo
 import pymysql
-from signalr import Connection
-from requests import Session
 from datetime import timedelta
 import settings
 
@@ -32,13 +31,18 @@ import settings
 class ProcessData(threading.Thread):
     def __init__(self):
         super().__init__()
+        self.changeTool = False
+        self.pre_total = None
+        self.cal_data = []
+        self.machineData_origin_cache = []
+        self.cycle_changeTool_start_time_str = None
+        self.cycle_changeTool_end_time_str = None
+        self.vibration_originData_cache = []
         self.dic = {}
         self.last_transform_time = self.now
-        self.vibData_cache = []
-        self.raw_vibData_cache = []
+        self.exist_list = []
         self.processed_raw_vibData = []
         self.load_cache = []
-        self.pre_data = None
         self.user_settings = {}
         self.set_feed = 0
         self.set_speed = 0
@@ -46,12 +50,13 @@ class ProcessData(threading.Thread):
         self.load = 0
         self.tool_hp = 0
         self.tool_hp_pre = 1
-        self.s = requests.Session()
         self.companyNo = settings.company_no
         self.deviceNo = settings.device_no
         self.logger = logging.getLogger()
         self.val = 30
-
+        self.vib_start_id = None
+        self.machine_start_id = None
+        self.vib_end_id = None
 
     @property
     def now(self):
@@ -96,9 +101,8 @@ class ProcessData(threading.Thread):
             self.get_mangodb_connect()
             self.set_machineinfo_from_file()
             self.set_logger()
-            #if not settings.LEARNNING_MODEL:
-                # self.get_mysql_connect()
-            #    self.get_signalr_hub()
+            self.vib_start_id = next(self.get_last_data_MongoDB(type=1))["_id"]
+            self.machine_start_id = next(self.get_last_data_MongoDB(type=2))["_id"]
             self.ready = True
         except Exception as e:
             print(e)
@@ -134,33 +138,71 @@ class ProcessData(threading.Thread):
         self.mysql_connect = pymysql.connect(**settings.mysql_info)
         self.cursor = self.mysql_connect.cursor()
 
-    def get_signalr_hub(self):
-        """
-        获取websocket连接
-        """
-        self.session = Session()
-        self.connection = Connection(settings.signalr_hub_info['url'], self.session)
-        self.hub = self.connection.register_hub(settings.signalr_hub_info["name"])
-        self.connection.start()
+    @property
+    def last_vibData(self):
+        return next(self.get_last_data_MongoDB())
 
     @clothes(settings.VIBDATA_DB_GET_BLANKING_TIME)
     def prepare_vibrationData(self):
         """
-        每个一秒钟从数据库中获取一次振动数据并处理成相应格式
+        准备好需要的振动数据
         """
-        origin_data = self.get_origin_vibrationData()
-        # print(origin_data)
-        self.process_vibrationData(origin_data)
-        self.make_vibDate_cache()
 
-    def get_origin_vibrationData(self, limit=settings.VIBDATA_COUNT):
+        origin_data = self.get_origin_vibrationData()
+        #print("origin_data", origin_data)
+        self.process_vibrationData(origin_data)
+
+
+    def get_last_data_MongoDB(self, type=1):
+        """
+        获取MongoDB中最后一条数据
+        :return:
+        """
+        if type == 1:
+            # 获得振动数据最后一条
+            databse = settings.vibdata_mangodb_info["db_name"]
+            collection = settings.vibdata_mangodb_info["tb_name"]
+
+        else:
+            # 获得机台信息数据最后一条
+            databse = settings.machineInfo_mangodb_info["db_name"]
+            collection = settings.machineInfo_mangodb_info["tb_name"]
+        col = self.vibdata_mangodb_connect[databse][collection].find({},sort=[('_id',pymongo.DESCENDING)],limit=1)
+        return col
+
+
+    def get_origin_vibrationData(self):
         """
         从数据库中获得原始数据
         """
-        cols = self.vibdata_mangodb_connect["VibrationData"][settings.vibdata_mangodb_info["tb_name"]].find({}, sort=[
-            ('_id', pymongo.DESCENDING)], limit=limit)
-        return list(cols)[::-1]
+        last_vibData = self.get_last_data_MongoDB()
+        last_id = next(last_vibData)["_id"]
+        start_id = self.vib_start_id
+        origin_data = self.findArangeWithID(start_id, last_id)
+        self.vib_start_id = last_id
+        # 去除重复的第一条数据 第一条为上一次获取的最后一条数据
+        next(origin_data)
+        origin_data = list(origin_data)
+        return origin_data if origin_data else [self.last_vibData]
 
+    def findArangeWithID(self, start_id: str, end_id: str, type=1):
+        """
+        在mongodb中根据id查询范围内数据
+        :param start_id:
+        :param end_id:
+        :return:
+        """
+        if type == 1:
+            database = settings.vibdata_mangodb_info["db_name"]
+            collection = settings.vibdata_mangodb_info["tb_name"]
+        else:
+            database = settings.machineInfo_mangodb_info["db_name"]
+            collection = settings.machineInfo_mangodb_info["tb_name"]
+        client = self.vibdata_mangodb_connect
+        mydb = client[database][collection].find(
+            {"_id": {"$gte": ObjectId(start_id), "$lte": ObjectId(end_id)}},
+        )
+        return mydb
     def process_vibrationData(self, db_data):
         """
         把数据库请求得到的数据处理成对应结果
@@ -174,14 +216,112 @@ class ProcessData(threading.Thread):
             self.val = sum(data)/len(data)
             data = [x - self.val for x in data]
         self.pre_data = data
-        return data
+
+    @property
+    def last_machineData(self):
+        return next(self.get_last_data_MongoDB(type=2))
 
     @clothes(settings.LOADDATA_DB_GET_BLANKING_TIME)
     def prepare_machineInfo(self):
-
         origin_machineinfo = self.get_origin_machineinfo()
-        self.set_machineinfo(origin_machineinfo)
-        if self.tool_num not in self.user_settings.keys():
+
+        self.set_machineinfo()
+        if origin_machineinfo:
+            self.analysisMachineData(origin_machineinfo)
+        self.make_machineData_cache()
+
+    def findArangeWithTime(self, start_time, end_time, type=1):
+        client = self.machineinfo_mangodb_connect
+        if type == 1:
+            database = settings.vibdata_mangodb_info["db_name"]
+            collection = settings.vibdata_mangodb_info["tb_name"]
+        else:
+            database = settings.machineInfo_mangodb_info["db_name"]
+            collection = settings.machineInfo_mangodb_info["tb_name"]
+        mydb = client[database][collection].find(
+            {"time": {"$gte": start_time, "$lte": end_time}},
+        )
+        return mydb
+
+
+    def get_tool_num(self, tool_num):
+        if tool_num < 10:
+            tool_num = "T0" + str(tool_num)
+        else:
+            tool_num = "T" + str(tool_num)
+        return tool_num
+    def analysisMachineData(self, machine_data):
+        """
+        根据获取到的机台信息分析当前运行状况
+        :return:
+        """
+        for item in machine_data:
+            print("tool:%s"%item['tool'])
+            if not self.cycle_changeTool_start_time_str:
+                self.cycle_changeTool_start_time_str = item["time"]
+                self.cycle_changeTool_start_id = item["_id"]
+            #print(item)
+            # 判断换刀
+            tool_list = item["tool"]
+            self.tool_num_pre = self.tool_num
+            self.tool_num = self.get_tool_num(tool_list[-1])
+            print(self.tool_num_pre,self.tool_num)
+            A = self.tool_num_pre != 0
+            B = tool_list[0] != tool_list[-1] or self.tool_num_pre != self.tool_num
+            if A and B:
+                # 更换了刀具
+                print("更换刀具")
+                self.cycle_changeTool_end_time_str = item["time"]
+                start_time = self.cycle_changeTool_start_time_str
+                end_time = self.cycle_changeTool_end_time_str
+                self.machineData_origin_cache = self.findArangeWithTime(start_time, end_time, type=2)
+                self.vibration_originData_cache = self.findArangeWithTime(start_time, end_time, type=1)
+                self.filter_data()
+                self.changeTool = True
+                print("%s->%s" % (self.cycle_changeTool_start_time_str, self.cycle_changeTool_end_time_str))
+                self.cycle_changeTool_start_time_str = end_time
+
+
+    def make_machineData_cache(self):
+        self.load_cache.append(self.load)
+
+    @clothes(settings.LOADDATA_UPLOAD_BLANKING_TIME, flag=True)
+    def 发送负载数据到云端(self):
+        device_num = int(self.deviceNo)
+        self.更新数据(device_num, self.load_cache[:5], tb_name="load_data")
+        if len(self.load_cache) >=10:
+            self.load_cache = self.load_cache[-5:]
+
+    def get_origin_machineinfo(self):
+        """
+        获取至上次获取的数据后开始到最新数据为止的数据
+        :return:
+        """
+        last_id = self.last_machineData["_id"]
+        start_id = self.machine_start_id
+        origin_data = self.findArangeWithID(start_id, last_id, type=2)
+        self.machine_start_id = last_id
+        # 去除重复的第一条数据 第一条为上一次获取的最后一条数据
+        next(origin_data)
+        origin_data = list(origin_data)
+        # print(origin_data[0]["_id"])
+        # print(origin_data[-1]["_id"])
+        return origin_data
+
+
+    def set_machineinfo(self):
+        """
+        根据最新机台信息设定算法所需的机台状态信息
+        :param origin_machineinfo:
+        :return:
+        """
+        origin_machineinfo = self.last_machineData
+        # self.set_feed = origin_machineinfo["setFeed"][0]
+        # self.act_feed = origin_machineinfo["actFeed"][0]
+        # self.set_speed = origin_machineinfo["setSpeed"][0]
+        # self.act_speed = origin_machineinfo["actSpeed"][0]
+        self.load = origin_machineinfo["load"][0]
+        if self.tool_num and self.tool_num not in self.user_settings.keys():
             self.user_settings[self.tool_num] = {
                 "feed": float(5000),
                 "speed": float(5000),
@@ -190,73 +330,7 @@ class ProcessData(threading.Thread):
                 "var2": float(0.6),
             }
             print("用户还未设定当前刀具信息")
-        self.make_load_cache()
 
-    def make_load_cache(self):
-        self.load_cache.append(self.load)
-
-    @clothes(settings.LOADDATA_UPLOAD_BLANKING_TIME, flag=True)
-    def 发送负载数据到云端(self):
-        #print("发送负载到云端%s" % self.load_cache)
-        #self.put_loaddata_to_cloud(self.load_cache)
-        print("当前负载数据：%s"%self.load_cache)
-        self.更新数据(1, self.load_cache, tb_name="load_data")
-        self.load_cache = []
-
-    def put_loaddata_to_cloud(self, data):
-        """
-        发送负载数据到云端 通过websocket
-        :param data:
-        :return:
-        """
-
-        data = ",".join([str(i) for i in data])
-
-        try:
-            self.hub.server.invoke(settings.FZ_HUB_NAME, self.companyNo, self.deviceNo, self.now_str(), data)
-        except Exception as e:
-            print(e)
-            self.ready = False
-
-    def get_origin_machineinfo(self):
-        """
-        获得机台状态信息
-        SPINDLE_LOAD, SET_FEED, SET_SPEED, TOOL_NUM, ACT_FEED, ACT_SPEED
-        :return:
-        """
-        db_name = settings.machineInfo_mangodb_info["db_name"]
-        tb_name = settings.machineInfo_mangodb_info["tb_name"]
-        ret = self.machineinfo_mangodb_connect[db_name][tb_name].find({}, sort=[('_id', pymongo.DESCENDING)], limit=1)
-        
-        ret = list(ret)[0]
-
-        set_feed = ret["setFeed"][0]
-        act_feed = ret["actFeed"][0]
-        set_speed = ret["setSpeed"][0]
-        act_speed = ret["actSpeed"][0]
-        load = ret["load"][0]
-        tool_num = ret["tool"][0]
-
-        if tool_num < 10:
-            tool_num = "T0" + str(tool_num)
-        else:
-            tool_num = "T" + str(tool_num)
-        return {"set_feed": set_feed, "act_feed": act_feed, "set_speed": set_speed, "act_speed": act_speed,
-                "tool_num": tool_num, 'load': load}
-
-    def set_machineinfo(self, origin_machineinfo):
-        """
-        设定算法所需的机台状态信息
-        :param origin_machineinfo:
-        :return:
-        """
-        self.set_feed = origin_machineinfo["set_feed"]
-        self.act_feed = origin_machineinfo["act_feed"]
-        self.set_speed = origin_machineinfo["set_speed"]
-        self.act_speed = origin_machineinfo["act_speed"]
-        self.tool_num_pre = self.tool_num
-        self.tool_num = origin_machineinfo["tool_num"]
-        self.load = origin_machineinfo["load"]
 
     def read_user_settings(self):
         """
@@ -290,34 +364,8 @@ class ProcessData(threading.Thread):
         """
         self.user_settings = self.read_user_settings()
 
-    def make_vibDate_cache(self):
-        """
-        把振动数据缓存起来
 
-        """
-        # print(self.机台正在加工())
-        # 缓存健康度计算数据
-        if self.机台正在加工():
-            self.vibData_cache.append(self.pre_data)
-
-        self.raw_vibData_cache.extend(self.pre_data)
-
-    def 判断机台进给(self):
-        if self.set_feed != 0 and self.set_feed - 100 < self.act_feed and self.act_feed < self.set_feed + 100:
-            return True
-        return False
-
-    def 判断机台转速(self):
-        if self.set_speed != 0 and  self.set_speed - 100 < self.act_speed and self.act_speed < self.set_speed + 100:
-            return True
-        return False
-
-    def 机台正在加工(self):
-        if self.判断机台转速() and self.判断机台进给():
-            return True
-        return False
-
-    @clothes(settings.RAWVIBDATA_UPLOAD_BLANKING_TIME)
+    @clothes(settings.RAWVIBDATA_UPLOAD_BLANKING_TIME, flag=True)
     def 发送振动数据到云端(self):
         """
         降维原始振动数据
@@ -326,14 +374,34 @@ class ProcessData(threading.Thread):
         :return:
         """
         data = self.处理振动数据()
+        device_num = int(self.deviceNo)
+        self.更新数据(device_num, data, tb_name="vib_data")
 
-        self.更新数据(self.deviceNo, data, tb_name="vib_data")
-        self.raw_vibData_cache = []
+    def 判断数据存在(self, machine_num):
+        if machine_num in self.exist_list:
+            return True
+        with self.mysql_connect.cursor() as cursor:
+            cursor.execute('''SELECT * from {0} WHERE machine_num={1};'''.format("vib_data", machine_num))
+            self.mysql_connect.commit()
+            ret1 = cursor.fetchone()
+
+            cursor.execute('''SELECT * from {0} WHERE machine_num={1};'''.format("load_data", machine_num))
+            self.mysql_connect.commit()
+            ret2 = cursor.fetchone()
+            if not ret1:
+                cursor.execute('''INSERT INTO vib_data(data, time, machine_num) VALUES("{0}",NOW(),{1});'''.format("[0]", machine_num))
+                self.mysql_connect.commit()
+            if not ret2:
+                cursor.execute('''INSERT INTO load_data(data, time, machine_num) VALUES("{0}",NOW(),{1});'''.format("[0]", machine_num))
+                self.mysql_connect.commit()
+            self.exist_list.append(machine_num)
 
     def 更新数据(self, machine_num, data, tb_name):
+
         data = str(data)
         now_time = self.now_str(formats="%Y-%m-%d %H:%M:%S")
         with self.mysql_connect.cursor() as cursor:
+
             cursor.execute(
                 '''UPDATE %s SET data="%s",time="%s" WHERE machine_num=%s;''' % (tb_name, data, now_time, machine_num))
             self.mysql_connect.commit()
@@ -346,8 +414,12 @@ class ProcessData(threading.Thread):
         把振动数据降频处理
         :return:
         """
-        self.processed_raw_vibData = self.raw_vibData_cache[:60]
-        data = self.processed_raw_vibData
+
+        data = self.last_vibData['zdata']
+        if self.load <= 0.5:
+            self.val = sum(data) / len(data)
+            data = [x - self.val for x in data]
+        data = data[:60]
         val = 600
         max_abs_val = max(abs(min(data)), abs(max(data)))
         if 600 < max_abs_val < 1000:
@@ -356,30 +428,26 @@ class ProcessData(threading.Thread):
             val = 1500
         elif max_abs_val >= 1500:
             val = 2000
-
         data.insert(0, val)
         data = ",".join([str(i) for i in data])
-        print("当前振动数据:%s"%data[:10])
         return data
 
-    @clothes(settings.TOOLHEALTH_COMPUTE_BLANKING_TIME, True)
     def 处理健康度(self):
         """
         通过算法把缓存的振动数据处理成刀具健康度然后发送到指定端口
         :return:
         """
+        if self.changeTool and self.is_available:
+            H, flag_wear = self.运行对应算法计算健康度()
+            if H:
+                H = H[0]
+                print(H, flag_wear)
+            self.tool_hp_pre = self.tool_hp
+            self.tool_hp = H
 
-        H, flag_wear = self.运行对应算法计算健康度()
-        if H:
-            H = H[0]
-            print(H, flag_wear)
-        self.tool_hp_pre = self.tool_hp
-        self.tool_hp = H
-
-        self.发送健康度到云端()
-        self.刀具报警判断(flag_wear)
-        self.发送健康度到API()
-        self.clean_vibdata_cache()
+            self.发送健康度到云端()
+            self.刀具报警判断(flag_wear)
+            self.changeTool = False
 
     def 刀具报警判断(self, flag_wear):
         """
@@ -390,20 +458,20 @@ class ProcessData(threading.Thread):
         if self.tool_hp_pre < self.tool_hp:
             return False
         hp_abs_val = self.tool_hp_pre - self.tool_hp
-        alpha = self.user_settings[self.tool_num]["var1"]
-        beta = self.user_settings[self.tool_num]["var2"]
+        alpha = self.user_settings[self.tool_num_pre]["var1"]
+        beta = self.user_settings[self.tool_num_pre]["var2"]
         flag = 0
         if flag_wear:
             print("磨损报警")
-            self.写入日志("刀具%s-->出现磨损报警" % self.tool_num)
+            self.写入日志("刀具%s-->出现磨损报警" % self.tool_num_pre)
             flag = 1
         #print(alpha)
         if alpha <= hp_abs_val < alpha + 0.2:
             print("崩缺报警")
-            self.写入日志("刀具%s-->出现崩缺报警" % self.tool_num)
+            self.写入日志("刀具%s-->出现崩缺报警" % self.tool_num_pre)
             flag = 2
         elif alpha + 0.2 <= hp_abs_val:
-            self.写入日志("刀具%s-->出现断刀报警" % self.tool_num)
+            self.写入日志("刀具%s-->出现断刀报警" % self.tool_num_pre)
             print("断刀报警")
             flag = 3
         if self.load > settings.MAX_LOAD_WARMING:
@@ -416,20 +484,11 @@ class ProcessData(threading.Thread):
     def 写入日志(self, msg):
         self.logger.warning(msg)
 
-    def 发送健康度到API(self):
-        data = settings.TOOL_HP_CACHE_POST_PARRM
-        data["collect_data"] = self.tool_hp
-        data["collect_date"] = self.now_str()
-        data["tool_position"] = self.tool_num
-        
-        #resp = self.s.post(settings.TOOL_HP_CACHE_POST_URL, data=data)
-        #print(resp.text)
-
     def 进行UI报警(self, type):
         print("ui报警")
-        sql = "insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),1,7,'MX8-08');"
         with self.mysql_connect.cursor() as cursor:
-            cursor.execute('''insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),%s,%s,'MX8-08');'''%(self.deviceNo, self.tool_num))
+            tool_num = int(self.tool_num_pre[1:])
+            cursor.execute('''insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),%s,%s,'MX8-08');'''%(self.deviceNo, tool_num))
             self.mysql_connect.commit()
             return True
 
@@ -447,11 +506,11 @@ class ProcessData(threading.Thread):
         
 
     def 运行对应算法计算健康度(self):
-        model = self.user_settings[self.tool_num]["model"]
-        alpha = self.user_settings[self.tool_num]["var1"]
-        beta = self.user_settings[self.tool_num]["var2"]
-
-        ret = self.alarm(self.vibData_cache, float(beta))
+        model = self.user_settings[self.tool_num_pre]["model"]
+        alpha = self.user_settings[self.tool_num_pre]["var1"]
+        beta = self.user_settings[self.tool_num_pre]["var2"]
+        data = []
+        ret = self.alarm(self.cal_data, float(beta))
 
         return ret
 
@@ -490,47 +549,34 @@ class ProcessData(threading.Thread):
 
     def 发送健康度到云端(self):
         #self.put_hpdata_to_cloud(self.tool_hp)
-        self.更新健康度(1,2,self.tool_hp)
-        print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num))
+        tool_num = int(self.tool_num_pre[1:])
+        device_num = int(self.deviceNo)
+        self.更新健康度(device_num,tool_num,self.tool_hp)
+        print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num_pre))
 
     def 更新健康度(self, machine_num, tool_num, tool_hp):
         now_time = self.now_str(formats="%Y-%m-%d %H:%M:%S")
-
+        sql = '''INSERT INTO tool_hp(hp, machine_num, tool_num,time) VALUES(%s,%s,%s,"%s");'''%(tool_hp, machine_num, tool_num, now_time)
         with self.mysql_connect.cursor() as cursor:
-            cursor.execute('''INSERT INTO tool_hp(hp, machine_num, tool_num,time) VALUES(%s,%s,%s,"%s");;'''%(tool_hp, machine_num, tool_num, now_time))
+            cursor.execute(sql)
             self.mysql_connect.commit()
             return True
-
-    def put_hpdata_to_cloud(self, data):
-        companyNo = self.companyNo
-        deviceNo = self.deviceNo
-        try:
-            self.hub.server.invoke(settings.HEALTH_HUB_NAME, companyNo, deviceNo, self.tool_num, self.now_str(), data * 100)
-        except Exception as e:
-            print(e)
-            self.ready = False
-
-    def clean_vibdata_cache(self):
-        self.vibData_cache = []
-
-    @property
-    def 机台换刀(self):
-        return True if self.tool_num_pre and self.tool_num != self.tool_num_pre else False
-
-    def 换刀判断(self):
-        if self.机台换刀:
-            self.dic[self.处理健康度] -= datetime.timedelta(milliseconds=settings.TOOLHEALTH_COMPUTE_BLANKING_TIME)
-
 
     @clothes(1000)
     def show_info(self):
         """
         显示当前算法运行状况
         """
-        print(
-            "当前机台->加工刀具:{2},当前转速/预设:{3}->{0},当前进给/预设:{4}->{1},负载:{5},当前健康度:{6},当前振动数据:{7},当前振动缓存数据{8},当前健康度缓存数据{9}, 机台是否正在加工"
-                .format(self.act_speed, self.act_feed, self.tool_num, self.set_speed, self.set_feed, self.load,
-                        self.tool_hp, len(self.pre_data), len(self.raw_vibData_cache), len(self.vibData_cache)), self.机台正在加工())
+        print("振动数据:%s;机台信息:%s;"%(len(self.vibration_originData_cache), len(self.machineData_origin_cache)))
+
+    @property
+    def is_available(self):
+        data = []
+        for i in range(len(self.cal_data)):
+            data += self.cal_data[i]
+
+        return True if len(data) >6000 else False
+
 
     def run(self) -> None:
         """
@@ -540,16 +586,16 @@ class ProcessData(threading.Thread):
             self.setup()
             while self.ready:
                 try:
+                    self.判断数据存在(int(self.deviceNo))
                     self.prepare_machineInfo()
-                    self.prepare_vibrationData()
-                    if self.机台正在加工():
-                        self.换刀判断()
-                        self.处理健康度()
+                    #self.prepare_vibrationData()
+                    self.处理健康度()
                     self.发送振动数据到云端()
                     self.发送负载数据到云端()
-                    self.show_info()
+                    #self.show_info()
                 except Exception as e:
                     print("错误信息：%s"%e)
+                    print("错误行号：%s"% e.__traceback__.tb_lineno)
                     self.ready = False
                 time.sleep(0.001)
             if not self.ready:
@@ -564,8 +610,68 @@ class ProcessData(threading.Thread):
         # 检查用户设定文件
         pass
 
+    def filter_data(self):
+        """
+        根据缓存数据筛分
+        :return:
+        """
+        print("开始筛分")
+        time = 0
+        count = 0
+        for machinedata_line in self.machineData_origin_cache:
+            try:
+                _id = machinedata_line["_id"]
+                actFeed = float(machinedata_line["actFeed"][0])
+                actSpeed = float(machinedata_line["actSpeed"][0])
+                load = machinedata_line["load"][0]
+                setFeed = float(machinedata_line["setFeed"][0])
+                setSpeed = float(machinedata_line["setSpeed"][0])
+                last_time = time if time else machinedata_line["time"]
+                time = machinedata_line["time"]
+                tool = machinedata_line["tool"][0]
+            except Exception as e:
+                print(e)
+                print(machinedata_line)
+            #print(setFeed, actFeed, setSpeed, actSpeed)
+            if setFeed - 100 < actFeed < setFeed + 100 and setSpeed - 100 < actSpeed < setSpeed + 100:
+                if count % 2 == 0:
+                    start_time = datetime.datetime.strptime(time, "%Y-%m-%d-%H-%M-%S-%f")
+                    count += 1
+            else:
+                if count % 2 == 1:
+                    end_time = datetime.datetime.strptime(last_time, "%Y-%m-%d-%H-%M-%S-%f")
+                    # 把start_time 和 end_time范围内的sensor数据保存到对应刀具文件下
+                    # print(start_time, end_time)
+                    for sensor_line in self.vibration_originData_cache:
+                        #print("===", sensor_line)
+                        sensor_time = datetime.datetime.strptime(sensor_line["time"], "%Y-%m-%d-%H-%M-%S-%f")
+                        if sensor_time > end_time:
+                            break
+                        if sensor_time > start_time:
+                            #print("===", sensor_line)
+                            self.cal_data.append(sensor_line["xdata"])
+                    count += 1
+        #print("count", count)
+        if count % 2 == 1:
 
+            end_time = datetime.datetime.strptime(last_time, "%Y-%m-%d-%H-%M-%S-%f")
+            # 把start_time 和 end_time范围内的sensor数据保存到对应刀具文件下
+            # print(start_time, end_time)
+            for sensor_line in self.vibration_originData_cache:
+                #print("===", sensor_line)
 
+                sensor_time = datetime.datetime.strptime(sensor_line["time"], "%Y-%m-%d-%H-%M-%S-%f")
+                #print(sensor_time, end_time)
+                if sensor_time > end_time:
+                    break
+                if sensor_time > start_time:
+                    print("===", sensor_line)
+                    self.cal_data.append(sensor_line["xdata"])
+            count += 1
+
+        self.vibration_originData_cache = []
+        self.machineData_origin_cache = []
+        print("结束")
 
 if __name__ == '__main__':
 

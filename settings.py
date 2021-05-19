@@ -76,10 +76,10 @@ RAWVIBDATA_UPLOAD_BLANKING_TIME = 1*1000
 VIBDATA_DB_TIME = 100
 
 # 每隔多少时间间隔获取一次机台信息 毫秒
-LOADDATA_DB_GET_BLANKING_TIME = 200
+LOADDATA_DB_GET_BLANKING_TIME = 100
 
 # 从数据库获取振动数据间隔 毫秒
-VIBDATA_DB_GET_BLANKING_TIME = 100
+VIBDATA_DB_GET_BLANKING_TIME = 1000
 
 # 每个间隔内从数据库中获取的数据条数
 VIBDATA_COUNT = VIBDATA_DB_GET_BLANKING_TIME//VIBDATA_DB_TIME
@@ -91,14 +91,14 @@ LEARNNING_MODEL_BLANKING_TIME = 2*1000
 vibdata_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "VibrationData",
-    "tb_name" : "Sensor0517",
+    "tb_name" : "Sensor",
     "connect_timeoutMS" : "10000",
 }
 
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
-    "db_name" : "FanucData",
-    "tb_name" : "Machine0517",
+    "db_name" : "MachineData",
+    "tb_name" : "machineData",
     "connect_timeoutMS" : "10000",
 }
 
@@ -106,7 +106,7 @@ mysql_info = {
     "host" : "localhost",  # mysql服务端ip
     "port" : 3306,  # mysql端口
     "user" : "root",  # mysql 账号
-    "password" : "root",
+    "password" : "rootroot",
     "db" : "djjk",
     "charset" : "utf8",
     "cursorclass" : pymysql.cursors.DictCursor
