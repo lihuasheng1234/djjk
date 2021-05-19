@@ -39,7 +39,7 @@ class ProcessData(threading.Thread):
         self.cycle_changeTool_end_time_str = None
         self.vibration_originData_cache = []
         self.dic = {}
-        self.last_transform_time = self.now
+
         self.exist_list = []
         self.processed_raw_vibData = []
         self.load_cache = []
@@ -57,6 +57,16 @@ class ProcessData(threading.Thread):
         self.vib_start_id = None
         self.machine_start_id = None
         self.vib_end_id = None
+
+    def is_time_space(self, t_str1, t_str2, diff):
+        """
+        判断两个时间是否超过指定距离
+        :param t1:
+        :param t2:
+        :param diff:
+        :return:
+        """
+        pass
 
     @property
     def now(self):
@@ -104,6 +114,7 @@ class ProcessData(threading.Thread):
             self.vib_start_id = next(self.get_last_data_MongoDB(type=1))["_id"]
             self.machine_start_id = next(self.get_last_data_MongoDB(type=2))["_id"]
             self.ready = True
+            self.last_transform_time =datetime.datetime.strptime(self.last_machineData["time"], "%Y-%m-%d-%H-%M-%S-%f")
         except Exception as e:
             print(e)
             self.ready = False
@@ -271,15 +282,11 @@ class ProcessData(threading.Thread):
             if A and B:
                 # 更换了刀具
                 print("更换刀具")
+                self.cycle_changeTool_start_time_str = self.cycle_changeTool_end_time_str
                 self.cycle_changeTool_end_time_str = item["time"]
-                start_time = self.cycle_changeTool_start_time_str
-                end_time = self.cycle_changeTool_end_time_str
-                self.machineData_origin_cache = self.findArangeWithTime(start_time, end_time, type=2)
-                self.vibration_originData_cache = self.findArangeWithTime(start_time, end_time, type=1)
-                self.filter_data()
                 self.changeTool = True
                 print("%s->%s" % (self.cycle_changeTool_start_time_str, self.cycle_changeTool_end_time_str))
-                self.cycle_changeTool_start_time_str = end_time
+
 
 
     def make_machineData_cache(self):
@@ -307,7 +314,9 @@ class ProcessData(threading.Thread):
         # print(origin_data[0]["_id"])
         # print(origin_data[-1]["_id"])
         return origin_data
-
+    @property
+    def machine_time_str(self):
+        return self.last_machineData["time"]
 
     def set_machineinfo(self):
         """
@@ -319,7 +328,8 @@ class ProcessData(threading.Thread):
         # self.set_feed = origin_machineinfo["setFeed"][0]
         # self.act_feed = origin_machineinfo["actFeed"][0]
         # self.set_speed = origin_machineinfo["setSpeed"][0]
-        # self.act_speed = origin_machineinfo["actSpeed"][0]
+        # self.act_speed = origin_machineinfo["actSpeed"][0]\
+
         self.load = origin_machineinfo["load"][0]
         if self.tool_num and self.tool_num not in self.user_settings.keys():
             self.user_settings[self.tool_num] = {
@@ -437,17 +447,51 @@ class ProcessData(threading.Thread):
         通过算法把缓存的振动数据处理成刀具健康度然后发送到指定端口
         :return:
         """
-        if self.changeTool and self.is_available:
-            H, flag_wear = self.运行对应算法计算健康度()
-            if H:
-                H = H[0]
-                print(H, flag_wear)
-            self.tool_hp_pre = self.tool_hp
-            self.tool_hp = H
+        if settings.ANALYSIS_MODEL == 1:
+            if self.changeTool:
+                start_time = self.cycle_changeTool_start_time_str
+                end_time = self.cycle_changeTool_end_time_str
+                self.machineData_origin_cache = self.findArangeWithTime(start_time, end_time, type=2)
+                self.vibration_originData_cache = self.findArangeWithTime(start_time, end_time, type=1)
+                self.filter_data()
+                self.changeTool = False
+                if self.is_available:
+                    H, flag_wear = self.运行对应算法计算健康度()
+                    if H:
+                        H = H[0]
+                        print(H, flag_wear)
+                    self.tool_hp_pre = self.tool_hp
+                    self.tool_hp = H
 
-            self.发送健康度到云端()
-            self.刀具报警判断(flag_wear)
-            self.changeTool = False
+                    self.发送健康度到云端()
+                    self.刀具报警判断(flag_wear)
+
+
+        else:
+            # 根据时长来计算
+            blanking_time = 5
+
+            now = datetime.datetime.strptime(self.machine_time_str, "%Y-%m-%d-%H-%M-%S-%f")
+            if self.changeTool or (now - self.last_transform_time) > timedelta(seconds=blanking_time):
+                print(now, self.last_transform_time, (now - self.last_transform_time))
+                start_time = self.last_transform_time.strftime(settings.SAVEDDATA_FILENAME_FORMAT)[:-3]
+                end_time = now.strftime(settings.SAVEDDATA_FILENAME_FORMAT)[:-3]
+                self.last_transform_time = now
+                self.machineData_origin_cache = self.findArangeWithTime(start_time, end_time, type=2)
+                self.vibration_originData_cache = self.findArangeWithTime(start_time, end_time, type=1)
+                self.filter_data()
+                self.changeTool = False
+                if self.is_available:
+                    H, flag_wear = self.运行对应算法计算健康度()
+                    if H:
+                        H = H[0]
+                        print(H, flag_wear)
+                    self.tool_hp_pre = self.tool_hp
+                    self.tool_hp = H
+
+                    self.发送健康度到云端()
+                    self.刀具报警判断(flag_wear)
+
 
     def 刀具报警判断(self, flag_wear):
         """
@@ -511,7 +555,7 @@ class ProcessData(threading.Thread):
         beta = self.user_settings[self.tool_num_pre]["var2"]
         data = []
         ret = self.alarm(self.cal_data, float(beta))
-
+        self.cal_data = []
         return ret
 
     '''
@@ -615,7 +659,7 @@ class ProcessData(threading.Thread):
         根据缓存数据筛分
         :return:
         """
-        print("开始筛分")
+       # print("开始筛分")
         time = 0
         count = 0
         for machinedata_line in self.machineData_origin_cache:
@@ -632,7 +676,6 @@ class ProcessData(threading.Thread):
             except Exception as e:
                 print(e)
                 print(machinedata_line)
-            #print(setFeed, actFeed, setSpeed, actSpeed)
             if setFeed - 100 < actFeed < setFeed + 100 and setSpeed - 100 < actSpeed < setSpeed + 100:
                 if count % 2 == 0:
                     start_time = datetime.datetime.strptime(time, "%Y-%m-%d-%H-%M-%S-%f")
@@ -640,38 +683,26 @@ class ProcessData(threading.Thread):
             else:
                 if count % 2 == 1:
                     end_time = datetime.datetime.strptime(last_time, "%Y-%m-%d-%H-%M-%S-%f")
-                    # 把start_time 和 end_time范围内的sensor数据保存到对应刀具文件下
-                    # print(start_time, end_time)
                     for sensor_line in self.vibration_originData_cache:
-                        #print("===", sensor_line)
                         sensor_time = datetime.datetime.strptime(sensor_line["time"], "%Y-%m-%d-%H-%M-%S-%f")
                         if sensor_time > end_time:
                             break
                         if sensor_time > start_time:
-                            #print("===", sensor_line)
                             self.cal_data.append(sensor_line["xdata"])
                     count += 1
-        #print("count", count)
         if count % 2 == 1:
-
             end_time = datetime.datetime.strptime(last_time, "%Y-%m-%d-%H-%M-%S-%f")
-            # 把start_time 和 end_time范围内的sensor数据保存到对应刀具文件下
-            # print(start_time, end_time)
             for sensor_line in self.vibration_originData_cache:
-                #print("===", sensor_line)
-
                 sensor_time = datetime.datetime.strptime(sensor_line["time"], "%Y-%m-%d-%H-%M-%S-%f")
-                #print(sensor_time, end_time)
                 if sensor_time > end_time:
                     break
                 if sensor_time > start_time:
-                    print("===", sensor_line)
                     self.cal_data.append(sensor_line["xdata"])
             count += 1
 
         self.vibration_originData_cache = []
         self.machineData_origin_cache = []
-        print("结束")
+        #print("结束")
 
 if __name__ == '__main__':
 

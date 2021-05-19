@@ -153,3 +153,5 @@ WORKING_HUB_NAME = TOTAL_SETTINGS["damage"]["raw_send_funcname"]
 FZ_HUB_NAME = TOTAL_SETTINGS["damage"]["load_send_funcname"]
 HEALTH_HUB_NAME = TOTAL_SETTINGS["damage"]["rws_send_funcname"]
 ALARM_HUB_NAME = TOTAL_SETTINGS["damage"]["alarm_send_funcname"]
+
+ANALYSIS_MODEL =1
