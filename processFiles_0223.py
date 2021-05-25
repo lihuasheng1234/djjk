@@ -1,3 +1,4 @@
+import csv
 import json
 import os
 import ctypes
@@ -256,7 +257,7 @@ class ProcessData(threading.Thread):
         return mydb
 
 
-    def get_tool_num(self, tool_num):
+    def get_tool_num_str(self, tool_num):
         if tool_num < 10:
             tool_num = "T0" + str(tool_num)
         else:
@@ -276,7 +277,7 @@ class ProcessData(threading.Thread):
             # 判断换刀
             tool_list = item["tool"]
             self.tool_num_pre = self.tool_num
-            self.tool_num = self.get_tool_num(tool_list[-1])
+            self.tool_num = tool_list[-1]
             print(self.tool_num_pre,self.tool_num)
             A = self.tool_num_pre != 0
             B = tool_list[0] != tool_list[-1] or self.tool_num_pre != self.tool_num
@@ -319,6 +320,8 @@ class ProcessData(threading.Thread):
     def machine_time_str(self):
         return self.last_machineData["time"]
 
+
+
     def set_machineinfo(self):
         """
         根据最新机台信息设定算法所需的机台状态信息
@@ -332,41 +335,48 @@ class ProcessData(threading.Thread):
         # self.act_speed = origin_machineinfo["actSpeed"][0]\
 
         self.load = origin_machineinfo["load"][0]
-        if self.tool_num and self.tool_num not in self.user_settings.keys():
+        tool = self.get_tool_num_str(self.tool_num)
+        if self.tool_num != 0 and tool not in self.user_settings.keys():
             self.user_settings[self.tool_num] = {
-                "feed": float(5000),
-                "speed": float(5000),
                 "model": "AAAAA",
                 "var1": float(0.2),
                 "var2": float(0.6),
+                "is_newTool": 0,
             }
             print("用户还未设定当前刀具信息")
 
-
     def read_user_settings(self):
         """
-        通过本地表格文件读取用户设定,
-        读取出来的数据均为字符串
+        通过本地表格文件读取用户设定
         :return:
         """
+        csvFile = open(settings.SHEET_PATH, "r", encoding="utf-8")
+        reader = csv.reader(csvFile)
+        reader = list(reader)
+        csvFile.close()
+        csvFile = open(settings.SHEET_PATH, "w", encoding="utf-8", newline='')
+        save_csvFile = csv.writer(csvFile)
         user_settings = {}
         # 迭代所有的行
-        for key in settings.json_data["damage"]:
-            if key.startswith("T"):
-                temp = settings.json_data["damage"][key].split(',')
-                tool_num = key
-                s = 0
-                f = 0
-                model = temp[0]
-                val1 = temp[1]
-                val2 = temp[2]
+
+        for row in reader:
+            if "T" in row[0]:
+                tool_num = row[0]
+                model = row[1]
+                val1 = float(row[2])
+                val2 = float(row[3])
+                is_newTool = int(row[4])
+                if is_newTool == 1:
+                    row[4] = "0"
+
                 user_settings[tool_num] = {
-                    "feed": float(f),
-                    "speed": float(s),
                     "model": model,
-                    "var1": float(val1),
-                    "var2": float(val2),
+                    "var1": val1,
+                    "var2": val2,
+                    "is_newTool": is_newTool,
                 }
+            save_csvFile.writerow(row)
+        csvFile.close()
         return user_settings
 
     def set_machineinfo_from_file(self):
@@ -449,7 +459,15 @@ class ProcessData(threading.Thread):
         通过算法把缓存的振动数据处理成刀具健康度然后发送到指定端口
         :return:
         """
-        if settings.ANALYSIS_MODEL == 1:
+        tool = self.get_tool_num_str(self.tool_num)
+        if self.tool_num and self.user_settings[tool]["is_newTool"] == 1:
+            self.user_settings[tool]["is_newTool"] = '0'
+            self.tool_hp = 1
+            device_num = int(self.deviceNo)
+            self.更新健康度(device_num, self.tool_num, self.tool_hp)
+            print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num_pre))
+
+        elif settings.ANALYSIS_MODEL == 1:
             if self.changeTool:
                 start_time = self.cycle_changeTool_start_time_str
                 end_time = self.cycle_changeTool_end_time_str
@@ -458,17 +476,14 @@ class ProcessData(threading.Thread):
                 self.filter_data()
                 self.changeTool = False
                 if self.is_available:
-                    H, flag_wear = self.运行对应算法计算健康度()
+                    H, flag_wear, flag_broken = self.运行对应算法计算健康度()
                     if H:
-                        H = H[0]
-                        print(H, flag_wear)
+                        print(H, flag_wear, flag_broken)
                     self.tool_hp_pre = self.tool_hp
                     self.tool_hp = H
 
                     self.发送健康度到云端()
-                    self.刀具报警判断(flag_wear)
-
-
+                    self.刀具报警判断(flag_wear, flag_broken)
         else:
             # 根据时长来计算
             blanking_time = 5
@@ -484,7 +499,7 @@ class ProcessData(threading.Thread):
                 self.filter_data()
                 self.changeTool = False
                 if self.is_available:
-                    H, flag_wear = self.运行对应算法计算健康度()
+                    H, flag_wear, flag_broken = self.运行对应算法计算健康度()
                     if H:
                         H = H[0]
                         print(H, flag_wear)
@@ -492,10 +507,10 @@ class ProcessData(threading.Thread):
                     self.tool_hp = H
 
                     self.发送健康度到云端()
-                    self.刀具报警判断(flag_wear)
+                    self.刀具报警判断(flag_wear, flag_broken)
 
 
-    def 刀具报警判断(self, flag_wear):
+    def 刀具报警判断(self, flag_wear, flag_broken):
         """
         根据刀具健康度与前一个计算的健康度差值进行报警处理
         :return:
@@ -504,20 +519,20 @@ class ProcessData(threading.Thread):
         if self.tool_hp_pre < self.tool_hp:
             return False
         hp_abs_val = self.tool_hp_pre - self.tool_hp
-        alpha = self.user_settings[self.tool_num_pre]["var1"]
-        beta = self.user_settings[self.tool_num_pre]["var2"]
+        tool = self.get_tool_num_str(self.tool_num_pre)
+        alpha = self.user_settings[tool]["var1"]
         flag = 0
         if flag_wear:
             print("磨损报警")
-            self.写入日志("刀具%s-->出现磨损报警" % self.tool_num_pre)
+            self.写入日志("刀具%s-->出现磨损报警" % tool)
             flag = 1
         #print(alpha)
         if alpha <= hp_abs_val < alpha + 0.2:
             print("崩缺报警")
-            self.写入日志("刀具%s-->出现崩缺报警" % self.tool_num_pre)
+            self.写入日志("刀具%s-->出现崩缺报警" % tool)
             flag = 2
-        elif alpha + 0.2 <= hp_abs_val:
-            self.写入日志("刀具%s-->出现断刀报警" % self.tool_num_pre)
+        if flag_broken:
+            self.写入日志("刀具%s-->出现断刀报警" % tool)
             print("断刀报警")
             flag = 3
         if self.load > settings.MAX_LOAD_WARMING:
@@ -533,7 +548,7 @@ class ProcessData(threading.Thread):
     def 进行UI报警(self, type):
         print("ui报警")
         with self.mysql_connect.cursor() as cursor:
-            tool_num = int(self.tool_num_pre[1:])
+            tool_num = self.get_tool_num_str(self.tool_num_pre)
             cursor.execute('''insert into warming(type,time,machine_num,tool_num,djgg) values('dd1',NOW(),%s,%s,'MX8-08');'''%(self.deviceNo, tool_num))
             self.mysql_connect.commit()
             return True
@@ -552,10 +567,8 @@ class ProcessData(threading.Thread):
         
 
     def 运行对应算法计算健康度(self):
-        model = self.user_settings[self.tool_num_pre]["model"]
-        alpha = self.user_settings[self.tool_num_pre]["var1"]
-        beta = self.user_settings[self.tool_num_pre]["var2"]
-        data = []
+        tool = self.get_tool_num_str(self.tool_num_pre)
+        beta = self.user_settings[tool]["var2"]
         ret = self.alarm(self.cal_data, float(beta))
         self.cal_data = []
         return ret
@@ -565,39 +578,42 @@ class ProcessData(threading.Thread):
     输出：健康度H、崩缺报警标志flag_notch、磨损报警标志flag_wear
     '''
 
-    def alarm(self, raw_data, beta=0.60):
-
+    def alarm(self, raw_data, beta=0.40):
         flag_wear = 0
-        feature = []
-        feature_all = []
+        flag_broken = 0
         data = []
         for i in range(len(raw_data)):
             data += raw_data[i]
-        print(len(data))
+
         # 计算rms
         tem = np.array(data)
         rms = sqrt(np.sum(np.int64(tem ** 2)) / len(data))
-        feature.append(rms)
-        data = pd.Series(data)
-        # 计算std、kurt
-        std = data.rolling(5000).std()
-        feature.append(std[6000])
-        kurt = data.rolling(5000).kurt()
-        feature.append(kurt[6000])
-        feature_all.append(feature)
+
+        # 断刀报警
+        if rms < 85:
+            flag_broken = 1
 
         # 预测健康度
-        H = self.rf.predict(feature_all)
+        H = 2 - rms/110+0.15
+
+        if H > 1:
+            H = 1
+            return H, flag_wear, flag_broken
         # 磨损报警
-        if H < beta:
+        elif beta < H < 1:
+            return H, flag_wear, flag_broken
+
+        elif 0 < H < beta:
             flag_wear = 1
-        return H, flag_wear
+            return H, flag_wear, flag_broken
+        else:
+            H = 0
+            return H, flag_wear, flag_broken
 
     def 发送健康度到云端(self):
         #self.put_hpdata_to_cloud(self.tool_hp)
-        tool_num = int(self.tool_num_pre[1:])
         device_num = int(self.deviceNo)
-        self.更新健康度(device_num,tool_num,self.tool_hp)
+        self.更新健康度(device_num,self.tool_num_pre,self.tool_hp)
         print("发送到云端:健康度->%s,刀具->%s" % (self.tool_hp, self.tool_num_pre))
 
     def 更新健康度(self, machine_num, tool_num, tool_hp):
@@ -613,7 +629,7 @@ class ProcessData(threading.Thread):
         """
         显示当前算法运行状况
         """
-        print("振动数据:%s;机台信息:%s;"%(len(self.vibration_originData_cache), len(self.machineData_origin_cache)))
+        print("当前刀号:%s;"%self.tool_num)
 
     @property
     def is_available(self):
@@ -640,7 +656,7 @@ class ProcessData(threading.Thread):
                     self.处理健康度()
                     self.发送振动数据到云端()
                     self.发送负载数据到云端()
-                    #self.show_info()
+                    self.show_info()
                 except Exception as e:
                     print("错误信息：%s"%e)
                     print("错误行号：%s"% e.__traceback__.tb_lineno)

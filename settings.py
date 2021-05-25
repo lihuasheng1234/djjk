@@ -93,14 +93,14 @@ ANALYSIS_MODEL =1
 vibdata_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
     "db_name" : "VibrationData",
-    "tb_name" : "Sensor0519",
+    "tb_name" : "Sensor",
     "connect_timeoutMS" : "10000",
 }
 
 machineInfo_mangodb_info = {
     "host" : "mongodb://localhost:27017/",
-    "db_name" : "FanucData",
-    "tb_name" : "Machine0519",
+    "db_name" : "MachineData",
+    "tb_name" : "machineData",
     "connect_timeoutMS" : "10000",
 }
 
@@ -108,7 +108,7 @@ mysql_info = {
     "host" : "localhost",  # mysql服务端ip
     "port" : 3306,  # mysql端口
     "user" : "root",  # mysql 账号
-    "password" : "root",
+    "password" : "rootroot",
     "db" : "djjk",
     "charset" : "utf8",
     "cursorclass" : pymysql.cursors.DictCursor
